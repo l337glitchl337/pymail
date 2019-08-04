@@ -1,4 +1,8 @@
-import socket, ssl, os
+import socket
+import ssl
+import os
+from email.message import EmailMessage
+from mimetypes import MimeTypes
 from base64 import b64encode
 
 class Mailer:
@@ -34,15 +38,21 @@ class Mailer:
     
     myorigin = f"MAIL FROM:<{sender}>\r\n"
     mydest = f"RCPT TO:<{recip}>\r\n"
-    msg = f"From: {sender}\r\nSubject: {subject}\r\nTo: {recip}\r\n{message}\r\n.\r\n"
+    msg = EmailMessage()
+    msg["To"] = recip
+    msg["From"] = sender
+    msg["Subject"] = subject
+    msg.set_content(message)
     self.socket.send(myorigin.encode())
 
     if attachment != False:
         filename = os.path.basename(attachment)
         with open(filename, "rb") as f:
-            data = b64encode(f.read()).decode()
-            header = f"Content-Type: multipart/mixed; boundary=sep\r\n--sep\r\n{message}\r\n--sep\r\nContent--Type: application/octet-stream; name={filename}\r\nContent-Disposition: attachment; filename={filename}\r\nContent-Transfer-Encoding: base64\r\n{data}"
-        msg = f"From: {sender}\r\nSubject: {subject}\r\nTo: {recip}\r\n{header}\r\n.\r\n"
+            data = f.read()
+            mimetype = MimeTypes().guess_type(filename)[0]
+            maintype, subtype = mimetype.split("/")
+            msg.add_attachment(data, maintype=mimetype, subtype=subtype, filename=filename)
+            msg = str(msg) + "\r\n.\r\n"
         while True:
             response = self.socket.recv(1024).decode()
             if response[:12] == "250 2.1.0 OK":
@@ -57,6 +67,7 @@ class Mailer:
                     self.socket.shutdown(socket.SHUT_RDWR)
                     return True
     else:
+        msg = str(msg) + "\r\n.\r\n"
         while True:
             response = self.socket.recv(1024).decode()
             if response[:12] == "250 2.1.0 OK":
@@ -89,7 +100,7 @@ if __name__ == "__main__":
         attachment = input("Path to image: ")
     message = "\r\n".join(mlist)
     mailer = Mailer("smtp.gmail.com", 465)
-    result = mailer.login("<YOUR_EMAIL>", "<APP_PASSWORD>")
+    result = mailer.login("acceptancenow1001@gmail.com", "pnkwlvtuwvpzethu")
     if result == False:
         print("Error logging in..")
     else:
