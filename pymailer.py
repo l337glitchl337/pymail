@@ -85,7 +85,7 @@ class Mailer:
             data = f.read()
             mimetype = MimeTypes().guess_type(attachment)[0]
             maintype, subtype = mimetype.split("/")
-            msg.add_attachment(data, maintype=mimetype, subtype=subtype, filename=attachment)
+            msg.add_attachment(data, maintype=mimetype, subtype=subtype, filename=os.path.basename(attachment))
             msg = str(msg) + "\r\n.\r\n"
         while True:
             response = self.socket.recv(1024).decode()
