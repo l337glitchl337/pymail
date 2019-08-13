@@ -2,6 +2,7 @@ import socket
 import ssl
 import os
 import json
+import sys
 from argparse import ArgumentParser, RawTextHelpFormatter
 from email.message import EmailMessage
 from mimetypes import MimeTypes
@@ -69,16 +70,39 @@ class Mailer:
                 self.socket.shutdown(socket.SHUT_RDWR)
                 return False
 
-  def send(self, sender, recip, subject, message, attachment=False):
+  def send(self, sender, subject, message, attachment=False, recip=False, mlist=False):
+
+    if mlist != False:
+        myorigin = f"MAIL FROM:<{sender}>\r\n"
+        self.socket.send(myorigin.encode())
+        response = self.socket.recv(1024).decode()
+        print(response.strip("\r\n"))
+        if response[:3] == "250":
+            for email in mlist:
+                if email != "":
+                    dest = f"RCPT TO:<{email}>\r\n"
+                    self.socket.send(dest.encode())
+                    response = self.socket.recv(1024).decode()
+                    print(response.strip("\r\n"))
+                    if response[:3] != "250":
+                        print(response)
+                        return
     
-    myorigin = f"MAIL FROM:<{sender}>\r\n"
-    mydest = f"RCPT TO:<{recip}>\r\n"
+            self.socket.send(b"DATA\r\n")
+
+    elif mlist == False:
+        myorigin = f"MAIL FROM:<{sender}>\r\n"
+        self.socket.send(myorigin.encode())
+        __ = self.socket.recv(1024)
+        mydest = f"RCPT TO:<{recip}>\r\n"
+        self.socket.send(mydest.encode())
+        __ = self.socket.recv(1024)
+        self.socket.send(b"DATA\r\n")
+    
     msg = EmailMessage()
-    msg["To"] = recip
     msg["From"] = sender
     msg["Subject"] = subject
     msg.set_content(message)
-    self.socket.send(myorigin.encode())
     
     if attachment != False:
         with open(attachment, "rb") as f:
@@ -90,10 +114,6 @@ class Mailer:
         while True:
             response = self.socket.recv(1024).decode()
             print(response.strip("\r\n"))
-            if response[:9] == "250 2.1.0":
-                self.socket.send(mydest.encode())
-            if response[:9] == "250 2.1.5":
-                self.socket.send(b"DATA\r\n")
             if response[:3] == "354":
                 self.socket.send(msg.encode())
             if response[:3] == "250" and response[:9] != "250 2.1.0" and response[:9] != "250 2.1.5":
@@ -106,10 +126,6 @@ class Mailer:
         while True:
             response = self.socket.recv(1024).decode()
             print(response.strip("\r\n"))
-            if response[:9] == "250 2.1.0":
-                self.socket.send(mydest.encode())
-            if response[:9] == "250 2.1.5":
-                self.socket.send(b"DATA\r\n")
             if response[:3] == "354":
                 self.socket.send(msg.encode())
             if response[:3] == "250" and response[:9] != "250 2.1.0" and response[:9] != "250 2.1.5":
@@ -119,20 +135,24 @@ class Mailer:
                 if response[:3] == "221":
                     self.socket.shutdown(socket.SHUT_RDWR)
                     return True
+    return
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="PyMailer by Glitch\r\nReddit: https://www.reddit.com/user/vigilexe\r\nGithub: https://github.com/l337glitchl337\r\nEmail: glitchedwarlock@gmail.com", formatter_class=RawTextHelpFormatter)
-    parser.add_argument("-r", "--recipient", required=True, help="email address of recipient", metavar="", dest="recip")
+    parser.add_argument("-r", "--recipient", required="--file" not in sys.argv, help="email address of recipient", metavar="", dest="recip")
     parser.add_argument("-s", "--sender", required=True, help="senders email", metavar="", dest="sender")
     parser.add_argument("-b", "--body", required=True, help="body of the message you would like to send", metavar="", dest="body")
     parser.add_argument("-a", "--attachment", help="path to file", metavar="", dest="attachment")
-    parser.add_argument("-sbj", "--subject", help="subject of email", metavar="", dest="subject")
+    parser.add_argument("-sbj", "--subject", required=True, help="subject of email", metavar="", dest="subject")
     parser.add_argument("-v", "--version", action="version", version="%(prog)s 0.0.1")
+    parser.add_argument("--file", help="path to text file of emails to mail to", metavar="", dest="file")
+
     args = parser.parse_args()
     recip = args.recip
     sender = args.sender
     subject = args.subject
     body = args.body.encode().decode("unicode_escape")
+
 
     with open("pymailer.config", "r") as f:
         creds = json.loads(f.read())
@@ -142,20 +162,18 @@ if __name__ == "__main__":
         exit()
     
     mailer = Mailer(creds["smtpserver"], int(creds["port"]))
-    status = mailer.login(creds["email"], creds["password"])
-
-    if status == True:
-        print("Login succesful")
-    else:
-        print("Error logging in")
+    mailer.login(creds["email"], creds["password"])
+    
+    if args.file:
+        with open(args.file, "r") as f:
+            mlist = f.read().split("\n")
+        if args.attachment:
+            mailer.send(sender, subject, body, mlist=mlist, attachment=args.attachment)
+        else:
+            mailer.send(sender, subject, body, mlist=mlist)
         exit()
 
     if args.attachment:
-        status = mailer.send(sender, recip, subject, body, attachment=args.attachment)
+        mailer.send(sender, subject, body, attachment=args.attachment, recip=recip)
     else:
-        status = mailer.send(sender, recip, subject, body)
-
-    if status == True:
-        print("Email sent")
-    else:
-        print("Email failed to deliver")
+        mailer.send(sender, subject, body, attachment=False, recip=recip)
