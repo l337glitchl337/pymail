@@ -188,7 +188,7 @@ class Mailer:
     return
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="PyMailer by Glitch\r\nReddit: https://www.reddit.com/user/vigilexe\r\nGithub: https://github.com/l337glitchl337\r\nEmail: glitchedwarlock@gmail.com", formatter_class=RawTextHelpFormatter)
+    parser = ArgumentParser(description="PyMailer by Glitch\r\nReddit: https://www.reddit.com/user/vigilexe\r\nGithub: https://github.com/l337glitchl337", formatter_class=RawTextHelpFormatter)
     parser.add_argument("-r", "--recipient", required="--file" not in sys.argv, help="email address of recipient", metavar="", dest="recip")
     parser.add_argument("-s", "--sender", required=True, help="senders email", metavar="", dest="sender")
     parser.add_argument("-b", "--body", required=True, help="body of the message you would like to send", metavar="", dest="body")
