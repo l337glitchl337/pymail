@@ -3,10 +3,14 @@ import ssl
 import os
 import json
 import sys
+import logging
 from argparse import ArgumentParser, RawTextHelpFormatter
 from email.message import EmailMessage
 from mimetypes import MimeTypes
 from base64 import b64encode
+
+class SMTPError(Exception):
+    pass
 
 class Mailer:
 
@@ -14,7 +18,9 @@ class Mailer:
     self.hostname = hostname
     self.port = port
     self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    self.s.settimeout(10)
     self.socket = ssl.create_default_context().wrap_socket(self.s, server_hostname=hostname)
+    logging.basicConfig(filename="error.log", level=logging.ERROR)
     
   def login(self, username, password):
     self.username = b64encode(username.encode()) + b"\r\n"
@@ -32,21 +38,28 @@ class Mailer:
             if response[:3] == "250":
                 self.socket.send(b"STARTTLS\r\n")
                 while True:
-                    response = self.socket.recv(1024).decode()
-                    print(response.strip("\r\n"))
-                    if response[:9] == "220 2.0.0":
-                        self.socket = ssl.create_default_context().wrap_socket(self.socket, server_hostname=self.hostname)
-                        self.socket.send(b"HELO relay.pymailer.com\r\n")
+                    try:
                         response = self.socket.recv(1024).decode()
                         print(response.strip("\r\n"))
-                        self.socket.send(b"AUTH LOGIN\r\n")
-                    if response[:16] == "334 VXNlcm5hbWU6":
-                        self.socket.send(self.username)
-                    if response[:16] == "334 UGFzc3dvcmQ6":
-                        self.socket.send(self.password)
-                    if response[:3] == "235":
-                        return True
-                    if response[:3] == "535":
+                        if response[:9] == "220 2.0.0":
+                            self.socket = ssl.create_default_context().wrap_socket(self.socket, server_hostname=self.hostname)
+                            self.socket.send(b"HELO relay.pymailer.com\r\n")
+                            response = self.socket.recv(1024).decode()
+                            print(response.strip("\r\n"))
+                            self.socket.send(b"AUTH LOGIN\r\n")
+                        if response[:16] == "334 VXNlcm5hbWU6":
+                            self.socket.send(self.username)
+                        if response[:16] == "334 UGFzc3dvcmQ6":
+                            self.socket.send(self.password)
+                        if response[:3] == "235":
+                            return True
+                        if response[:3] == "535":
+                            self.socket.shutdown(socket.SHUT_RDWR)
+                            return False
+                        else:
+                            raise SMTPError(response)
+                    except SMTPError as error:
+                        logging.error(error)
                         self.socket.shutdown(socket.SHUT_RDWR)
                         return False
 
@@ -54,19 +67,26 @@ class Mailer:
         self.socket.connect((self.hostname, self.port))
 
         while True:
-            response = self.socket.recv(1024).decode()
-            print(response.strip("\r\n"))
-            if response[:3] == "220":
-                self.socket.send(b"HELO relay.pymailer.com\r\n")
-            if response[:3] == "250":
-                self.socket.send(b"AUTH LOGIN\r\n")
-            if response[:16] == "334 VXNlcm5hbWU6":
-                self.socket.send(self.username)
-            if response[:16] == "334 UGFzc3dvcmQ6":
-                self.socket.send(self.password)
-            if response[:3] == "235":
-                return True
-            if response[:3] == "535":
+            try:
+                response = self.socket.recv(1024).decode()
+                print(response.strip("\r\n"))
+                if response[:3] == "220":
+                    self.socket.send(b"HELO relay.pymailer.com\r\n")
+                elif response[:3] == "250":
+                    self.socket.send(b"AUTH LOGIN\r\n")
+                elif response[:16] == "334 VXNlcm5hbWU6":
+                    self.socket.send(self.username)
+                elif response[:16] == "334 UGFzc3dvcmQ6":
+                    self.socket.send(self.password)
+                elif response[:3] == "235":
+                    return True
+                elif response[:3] == "535":
+                    self.socket.shutdown(socket.SHUT_RDWR)
+                    return False
+                else:
+                    raise SMTPError(response)
+            except SMTPError as error:
+                logging.error(error)
                 self.socket.shutdown(socket.SHUT_RDWR)
                 return False
 
@@ -77,33 +97,47 @@ class Mailer:
         self.socket.send(myorigin.encode())
         response = self.socket.recv(1024).decode()
         print(response.strip("\r\n"))
-        if response[:3] == "250":
-            for email in mlist:
-                if email != "":
-                    dest = f"RCPT TO:<{email}>\r\n"
-                    self.socket.send(dest.encode())
-                    response = self.socket.recv(1024).decode()
-                    print(response.strip("\r\n"))
-                    if response[:3] != "250":
-                        print(response)
-                        return
-    
+        try:
+            if response[:3] == "250":
+                for email in mlist:
+                    if email != "":
+                        dest = f"RCPT TO:<{email}>\r\n"
+                        self.socket.send(dest.encode())
+                        response = self.socket.recv(1024).decode()
+                        print(response.strip("\r\n"))
+                        if response[:3] == "220":
+                            print(response.strip("\r\n"))
+            elif response[:3] != "250":
+                raise SMTPError(response)
             self.socket.send(b"DATA\r\n")
+        except SMTPError as error:
+            logging.error(error)
+            self.socket.shutdown(socket.SHUT_RDWR)
+            return False
 
     elif mlist == False:
-        myorigin = f"MAIL FROM:<{sender}>\r\n"
-        self.socket.send(myorigin.encode())
-        __ = self.socket.recv(1024)
-        mydest = f"RCPT TO:<{recip}>\r\n"
-        self.socket.send(mydest.encode())
-        __ = self.socket.recv(1024)
-        self.socket.send(b"DATA\r\n")
-    
+        try:
+            myorigin = f"MAIL FROM:<{sender}>\r\n"
+            self.socket.send(myorigin.encode())
+            response = self.socket.recv(1024).decode()
+            if response[:9] != "250 2.1.0":
+                raise SMTPError(response)
+            mydest = f"RCPT TO:<{recip}>\r\n"
+            self.socket.send(mydest.encode())
+            response = self.socket.recv(1024).decode()
+            if response[:9] != "250 2.1.5":
+                raise SMTPError(response)
+            self.socket.send(b"DATA\r\n")
+        except SMTPError as error:
+            logging.error(error)
+            self.socket.shutdown(socket.SHUT_RDWR)
+            return False
+        
     msg = EmailMessage()
     msg["From"] = sender
     msg["Subject"] = subject
     msg.set_content(message)
-    
+            
     if attachment != False:
         with open(attachment, "rb") as f:
             data = f.read()
@@ -112,29 +146,45 @@ class Mailer:
             msg.add_attachment(data, maintype=mimetype, subtype=subtype, filename=os.path.basename(attachment))
             msg = str(msg) + "\r\n.\r\n"
         while True:
-            response = self.socket.recv(1024).decode()
-            print(response.strip("\r\n"))
-            if response[:3] == "354":
-                self.socket.send(msg.encode())
-            if response[:3] == "250" and response[:9] != "250 2.1.0" and response[:9] != "250 2.1.5":
-                self.socket.send(b"QUIT\r\n")
-                if self.socket.recv(1024).decode()[:3] == "221":
-                    self.socket.shutdown(socket.SHUT_RDWR)
-                    return True
-    else:
-        msg = str(msg) + "\r\n.\r\n"
-        while True:
-            response = self.socket.recv(1024).decode()
-            print(response.strip("\r\n"))
-            if response[:3] == "354":
-                self.socket.send(msg.encode())
-            if response[:3] == "250" and response[:9] != "250 2.1.0" and response[:9] != "250 2.1.5":
-                self.socket.send(b"QUIT\r\n")
+            try:
                 response = self.socket.recv(1024).decode()
                 print(response.strip("\r\n"))
-                if response[:3] == "221":
-                    self.socket.shutdown(socket.SHUT_RDWR)
-                    return True
+                if response[:3] == "354":
+                    self.socket.send(msg.encode())
+                elif response[:3] == "250" and response[:9] != "250 2.1.0" and response[:9] != "250 2.1.5":
+                    self.socket.send(b"QUIT\r\n")
+                    if self.socket.recv(1024).decode()[:3] == "221":
+                        self.socket.shutdown(socket.SHUT_RDWR)
+                        return True
+                else:
+                    raise SMTPError(response)
+            except SMTPError as error:
+                logging.error(response)
+                self.socket.shutdown(socket.SHUT_RDWR)
+                return False
+    else:
+        try:
+            msg = str(msg) + "\r\n.\r\n"
+            while True:
+                response = self.socket.recv(1024).decode()
+                print(response.strip("\r\n"))
+                if response[:3] == "354":
+                    self.socket.send(msg.encode())
+                elif response[:3] == "250" and response[:9] != "250 2.1.0" and response[:9] != "250 2.1.5":
+                    self.socket.send(b"QUIT\r\n")
+                    response = self.socket.recv(1024).decode()
+                    print(response.strip("\r\n"))
+                    if response[:3] == "221":
+                        self.socket.shutdown(socket.SHUT_RDWR)
+                        return True
+                else:
+                    raise SMTPError(response)
+        except SMTPError as error:
+            logging.error(response)
+            self.socket.shutdown(socket.SHUT_RDWR)
+            return False
+
+
     return
 
 if __name__ == "__main__":
